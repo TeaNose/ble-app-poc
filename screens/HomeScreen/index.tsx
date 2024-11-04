@@ -5,7 +5,7 @@ import {LOG} from '../../config';
 
 const HomeScreen = () => {
   const onClick = () => {
-    LOG.info('Test');
+    LOG.info('Test hehe anjir');
   };
 
   const getFileContent = async path => {

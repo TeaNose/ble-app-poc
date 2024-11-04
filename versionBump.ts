@@ -28,7 +28,6 @@ const versionNameRegex = /versionName\s+"(\d+\.\d+\.\d+)"/;
 buildGradle = buildGradle.replace(versionCodeRegex, (match, p1) => `versionCode ${parseInt(p1) + 1}`);
 
 // Set versionName to the new version
-console.log('versionNameRegex: ', versionNameRegex);
 buildGradle = buildGradle.replace(versionNameRegex, `versionName "${newVersion}"`);
 
 // Write updated content back to build.gradle
