@@ -12,6 +12,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "buffer": "^6.0.3",
     "react": "18.1.0",
     "react-native": "0.70.10",
     "react-native-ble-plx": "^3.2.1",
