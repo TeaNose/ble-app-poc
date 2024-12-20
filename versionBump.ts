@@ -9,14 +9,7 @@ if (!newVersion || !/^\d+\.\d+\.\d+$/.test(newVersion)) {
   process.exit(1);
 }
 
-// Step 1: Update package.json version
-const packageJsonPath = path.join(__dirname, 'package.json');
-const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-packageJson.version = newVersion;
-fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
-console.log(`Updated package.json version to ${newVersion}`);
-
-// Step 2: Update build.gradle versionCode and versionName
+// Step 1: Update build.gradle versionCode and versionName
 const buildGradlePath = path.join(__dirname, 'android/app', 'build.gradle');
 let buildGradle = fs.readFileSync(buildGradlePath, 'utf8');
 
