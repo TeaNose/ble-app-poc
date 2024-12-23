@@ -36,6 +36,10 @@ const HomeScreen = () => {
   const [allServices, setAllServices] = React.useState(null);
   const [allCharacteristics, setAllCharacteristics] = React.useState(null);
   const [desService, setDesService] = React.useState(null);
+  const [collectedVibrationData, setCollectedVibrationData] = React.useState(
+    [],
+  );
+  const [isFetching, setIsFetching] = React.useState(false);
 
   const onClick = () => {
     LOG.info('Test hehe anjir');
@@ -130,24 +134,25 @@ const HomeScreen = () => {
             const charas = await service.characteristics();
 
             if (service.uuid === serviceId) {
+              setDesService(service);
               for (const characteristic of charas) {
                 if (characteristic.uuid === cmdCharacId) {
                   setWriteCharacteristic(characteristic);
                 }
                 if (characteristic.uuid === dataCharacId) {
                   setReadCharacteristic(characteristic);
-                  if (!isSubscribed) {
-                    setIsSubscribed(true);
-                    characteristic.monitor((error, data) => {
-                      if (error) {
-                        ToastAndroid.show(
-                          'Data subscription error: ',
-                          ToastAndroid.SHORT,
-                        );
-                      }
-                      handleData(data?.value);
-                    });
-                  }
+                  // if (!isSubscribed) {
+                  //   setIsSubscribed(true);
+                  //   characteristic.monitor((error, data) => {
+                  //     if (error) {
+                  //       ToastAndroid.show(
+                  //         'Data subscription error: ',
+                  //         ToastAndroid.SHORT,
+                  //       );
+                  //     }
+                  //     handleData(data?.value);
+                  //   });
+                  // }
                 }
                 // allCharasHelper.push(characteristic);
                 // console.log(`  Characteristic: ${characteristic.uuid}`);
@@ -207,7 +212,7 @@ const HomeScreen = () => {
     setIsScanning(false);
   };
 
-  const sendData = async (data) => {
+  const sendData = async data => {
     if (writeCharateristic) {
       const checksum = data.reduce((sum, val) => (sum + val) % 256, 0);
       const dataWithChecksum = [...data, (256 - checksum) % 256];
@@ -293,8 +298,48 @@ const HomeScreen = () => {
     await collectData(4, 0, 0, 1000);
   };
 
-  console.log('allCharacteristics: ', JSON.stringify(allCharacteristics));
-  console.log('allServices: ', JSON.stringify(allServices));
+  const getVibrationData = async () => {
+    console.log('HEHE');
+    setIsFetching(true);
+    try {
+      // Subscribe to vibration data characteristic
+      const subscription = connectedDevice?.monitorCharacteristicForService(
+        serviceId,
+        readCharacteristic?.uuid,
+        (error, characteristic) => {
+          if (error) {
+            Alert.alert(
+              'Error subscribing to characteristic',
+              JSON.stringify(error),
+            );
+            console.error('Error subscribing to characteristic:', error);
+            return;
+          }
+          setCollectedVibrationData(prevList => [...prevList, characteristic]);
+
+          if (characteristic?.value) {
+            ToastAndroid.show(
+              'Succeed getting vibration data',
+              ToastAndroid.SHORT,
+            );
+            // Decode the vibration data
+            // const vibrationData = Buffer.from(characteristic.value, 'base64');
+            // console.log('Vibration Data:', vibrationData);
+          }
+        },
+      );
+
+      // return () => subscription.remove();
+      // setTimeout(() => {
+      //   subscription.remove();
+      //   console.log('Unsubscribed from vibration data');
+      // }, 10000);
+    } catch (error) {
+      Alert.alert('Error getting vibration data', JSON.stringify(error));
+    } finally {
+      setIsFetching(false);
+    }
+  };
 
   return (
     <ScrollView>
@@ -306,7 +351,8 @@ const HomeScreen = () => {
           backgroundColor: 'white',
         }}>
         <Text>{`Connected Device: ${connectedDevice?.name} - Device ID: ${connectedDevice?.id} `}</Text>
-        <Text>{`Write characteristic: ${writeCharateristic?.uuid}}`}</Text>
+        <Text>{`Service: ${desService?.uuid}`}</Text>
+        <Text>{`Write characteristic: ${writeCharateristic?.uuid}`}</Text>
         <Text>{`Read characteristic: ${readCharacteristic?.uuid}`}</Text>
 
         <View style={{height: 20, backgroundColor: 'white'}} />
@@ -320,10 +366,12 @@ const HomeScreen = () => {
             <Text>{JSON.stringify(deviceItem?.name)}</Text>
           </TouchableOpacity>
         ))}
-        <Button title={'Collect Vibration Data'} onPress={collectVibData} />
+        <Button title={'Collect Vibration Data'} onPress={getVibrationData} />
         <View style={{height: 20}} />
 
-        <Text>{`Data result: ${JSON.stringify(dataResult)}`}</Text>
+        <Text>{`Vibration data result: ${JSON.stringify(
+          collectedVibrationData,
+        )}`}</Text>
         {/* <TouchableOpacity onPress={onReadFile}>
         <Text>Read file</Text>
       </TouchableOpacity> */}
