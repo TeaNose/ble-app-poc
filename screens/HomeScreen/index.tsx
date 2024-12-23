@@ -7,6 +7,7 @@ import {
   Alert,
   ActivityIndicator,
   Button,
+  ScrollView,
 } from 'react-native';
 import RNFS from 'react-native-fs';
 import {Buffer} from 'buffer';
@@ -15,9 +16,9 @@ import {LOG} from '../../config';
 import {reqBluetoothPermissions} from './permissions';
 import bleManager from './bleManager';
 
-const serviceId = 'b7ef1193-dc2e-4362-93d3-df429eb3ad10';
-const cmdCharacId = '00ce7a72-ec08-473d-943e-81ec27fdc600';
-const dataCharacId = '00ce7a72-ec08-473d-943e-81ec27fdc600';
+const serviceId = 'b7ef1193-dc2e-4362-93d3-df429eb3ad10'; //service uuid
+const cmdCharacId = '00ce7a72-ec08-473d-943e-81ec27fdc600'; //write uuid
+const dataCharacId = '00ce7a72-ec08-473d-943e-81ec27fdc5f2'; //read
 
 let resciveData = [];
 let waveDataT = {};
@@ -32,6 +33,9 @@ const HomeScreen = () => {
   const [isSubscribed, setIsSubscribed] = React.useState(false);
   const [dataResult, setDataResult] = React.useState([]);
   const [vibrationData, setVibrationData] = React.useState([]);
+  const [allServices, setAllServices] = React.useState(null);
+  const [allCharacteristics, setAllCharacteristics] = React.useState(null);
+  const [desService, setDesService] = React.useState(null);
 
   const onClick = () => {
     LOG.info('Test hehe anjir');
@@ -77,9 +81,11 @@ const HomeScreen = () => {
 
   const discoverServices = async device => {
     const services = await device.discoverAllServicesAndCharacteristics();
+    // setAllServices(services);
     const desiredServices = services.find(
       service => service.uuid === serviceId,
     );
+    setDesService(desiredServices);
 
     if (desiredServices) {
       const charateristics = await desiredServices.charateristics();
@@ -107,15 +113,59 @@ const HomeScreen = () => {
     try {
       await bleManager
         .connectToDevice(deviceId)
-        .then(device => {
+        .then(async device => {
+          console.log(JSON.stringify(device));
           console.log('Connected to device:', device.name);
           setConnectedDevice(device);
-          discoverServices(device);
+          // discoverServices(device);
           ToastAndroid.show('SUCCESS CONNECT DEVICE', ToastAndroid.SHORT);
+          await device.discoverAllServicesAndCharacteristics();
+          const serviceResponse = await device.services();
+          // setAllServices(serviceResponse);
+          const allServicesHelper = [];
+          const allCharasHelper = [];
+          for (const service of serviceResponse) {
+            console.log(`Service: ${service.uuid}`);
+            allServicesHelper.push(service);
+            const charas = await service.characteristics();
+
+            if (service.uuid === serviceId) {
+              for (const characteristic of charas) {
+                if (characteristic.uuid === cmdCharacId) {
+                  setWriteCharacteristic(characteristic);
+                }
+                if (characteristic.uuid === dataCharacId) {
+                  setReadCharacteristic(characteristic);
+                  if (!isSubscribed) {
+                    setIsSubscribed(true);
+                    characteristic.monitor((error, data) => {
+                      if (error) {
+                        ToastAndroid.show(
+                          'Data subscription error: ',
+                          ToastAndroid.SHORT,
+                        );
+                      }
+                      handleData(data?.value);
+                    });
+                  }
+                }
+                // allCharasHelper.push(characteristic);
+                // console.log(`  Characteristic: ${characteristic.uuid}`);
+                // console.log(
+                //   `    Properties: ${JSON.stringify(
+                //     characteristic.properties,
+                //   )}`,
+                // );
+              }
+            }
+          }
+          // setAllCharacteristics(allCharasHelper);
+          // const serviceSamples = await bleManager.discoverAllServicesAndCharacteristicsForDevice(device?.id);
+          // setAllServices(serviceSamples);
 
           // Add your logic for handling the connected device
 
-          return device.discoverAllServicesAndCharacteristics();
+          // return device.discoverAllServicesAndCharacteristics();
         })
         .catch(error => {
           ToastAndroid.show('ERROR CONNECT DEVICE', ToastAndroid.SHORT);
@@ -138,14 +188,15 @@ const HomeScreen = () => {
       // Check if it is a device, you are looking for based on advertisement data
       // or other criteria.
       if (device?.name) {
+        bleManager.stopDeviceScan();
+        setIsScanning(false);
         // Stop scanning as it's not necessary if you are scanning for one device.
         setDeviceList(prevList => [...prevList, device]);
         // connect();
-        setIsScanning(false);
-        bleManager.stopDeviceScan();
 
         // Proceed with connection.
       } else {
+        bleManager.stopDeviceScan();
         setIsScanning(false);
       }
     });
@@ -156,12 +207,12 @@ const HomeScreen = () => {
     setIsScanning(false);
   };
 
-  const sendData = async (cmd, data) => {
+  const sendData = async (data) => {
     if (writeCharateristic) {
       const checksum = data.reduce((sum, val) => (sum + val) % 256, 0);
       const dataWithChecksum = [...data, (256 - checksum) % 256];
-      setVibrationData((prevList) => [...prevList, dataWithChecksum]);
-      await writeCharateristic.writeWithResponse(Buffer.from(dataWithChecksum));
+      setVibrationData(prevList => [...prevList, dataWithChecksum]);
+      // await writeCharateristic.writeWithResponse(Buffer.from(dataWithChecksum));
     } else {
       ToastAndroid.show('No Write Characteritic Available', ToastAndroid.SHORT);
     }
@@ -207,7 +258,7 @@ const HomeScreen = () => {
       startCollect.mdefLen.y,
     ]);
 
-    sendData(0x01, data);
+    sendData(data);
   };
 
   React.useEffect(() => {
@@ -234,33 +285,50 @@ const HomeScreen = () => {
     await collectData(0, 3, 8, 3125);
   };
 
+  const collectTemperatureData = async () => {
+    await collectData(1, 0, 0, 1000);
+  };
+
+  const stopCollectTemperatureData = async () => {
+    await collectData(4, 0, 0, 1000);
+  };
+
+  console.log('allCharacteristics: ', JSON.stringify(allCharacteristics));
+  console.log('allServices: ', JSON.stringify(allServices));
+
   return (
-    <View
-      style={{
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-        backgroundColor: 'white',
-      }}>
-      <Text>{`Connected Device: ${connectedDevice?.name}`}</Text>
-      <View style={{height: 20, backgroundColor: 'white'}} />
-      <Button title="Start Scan" onPress={startScanning} />
-      <View style={{height: 20}} />
-      <Button title="Stop Scan" onPress={stopScanning} />
-      {isScanning && <ActivityIndicator />}
-      <View style={{height: 20}} />
-      <Button title={'Collect Vibration Data'} onPress={collectVibData} />
-      <View style={{height: 20}} />
-      {deviceList?.map(deviceItem => (
-        <TouchableOpacity onPress={() => connect(deviceItem?.id)}>
-          <Text>{JSON.stringify(deviceItem?.name)}</Text>
-        </TouchableOpacity>
-      ))}
-      <Text>{`Data result: ${JSON.stringify(dataResult)}`}</Text>
-      {/* <TouchableOpacity onPress={onReadFile}>
+    <ScrollView>
+      <View
+        style={{
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+          backgroundColor: 'white',
+        }}>
+        <Text>{`Connected Device: ${connectedDevice?.name} - Device ID: ${connectedDevice?.id} `}</Text>
+        <Text>{`Write characteristic: ${writeCharateristic?.uuid}}`}</Text>
+        <Text>{`Read characteristic: ${readCharacteristic?.uuid}`}</Text>
+
+        <View style={{height: 20, backgroundColor: 'white'}} />
+        <Button title="Start Scan" onPress={startScanning} />
+        <View style={{height: 20}} />
+        <Button title="Stop Scan" onPress={stopScanning} />
+        {isScanning && <ActivityIndicator />}
+        <View style={{height: 20}} />
+        {deviceList?.map(deviceItem => (
+          <TouchableOpacity onPress={() => connect(deviceItem?.id)}>
+            <Text>{JSON.stringify(deviceItem?.name)}</Text>
+          </TouchableOpacity>
+        ))}
+        <Button title={'Collect Vibration Data'} onPress={collectVibData} />
+        <View style={{height: 20}} />
+
+        <Text>{`Data result: ${JSON.stringify(dataResult)}`}</Text>
+        {/* <TouchableOpacity onPress={onReadFile}>
         <Text>Read file</Text>
       </TouchableOpacity> */}
-    </View>
+      </View>
+    </ScrollView>
   );
 };
 
