@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import RNFS from 'react-native-fs';
 import {Buffer} from 'buffer';
+import moment from 'moment';
 
 import {LOG} from '../../config';
 import {reqBluetoothPermissions} from './permissions';
@@ -36,10 +37,10 @@ const HomeScreen = () => {
   const [allServices, setAllServices] = React.useState(null);
   const [allCharacteristics, setAllCharacteristics] = React.useState(null);
   const [desService, setDesService] = React.useState(null);
-  const [collectedVibrationData, setCollectedVibrationData] = React.useState(
-    [],
-  );
+  const [collectedVibrationData, setCollectedVibrationData] =
+    React.useState(null);
   const [isFetching, setIsFetching] = React.useState(false);
+  const [readCharData, setReadCharData] = React.useState('');
 
   const onClick = () => {
     LOG.info('Test hehe anjir');
@@ -76,42 +77,88 @@ const HomeScreen = () => {
       });
   };
 
-  const handleData = data => {
-    const dataBuffer = Buffer.from(data, 'base64');
-    const dataArray = Array.from(dataBuffer);
+  const handleVibrationData = data => {
+    const dataArray = new Uint8Array(data);
 
-    setDataResult(dataArray);
-  };
+    const x = dataArray[0];
+    const y = dataArray[1];
+    const z = dataArray[2];
 
-  const discoverServices = async device => {
-    const services = await device.discoverAllServicesAndCharacteristics();
-    // setAllServices(services);
-    const desiredServices = services.find(
-      service => service.uuid === serviceId,
-    );
-    setDesService(desiredServices);
+    const magnitude = Math.sqrt(x * x + y * y + z * z);
 
-    if (desiredServices) {
-      const charateristics = await desiredServices.charateristics();
-      charateristics.forEach(characteristic => {
-        if (characteristic.uuid === cmdCharacId) {
-          setWriteCharacteristic(characteristic);
-        }
-        if (characteristic.uuid === dataCharacId) {
-          setReadCharacteristic(characteristic);
-          if (!isSubscribed) {
-            setIsSubscribed(true);
-            characteristic.monitor((error, data) => {
-              if (error) {
-                console.log('Data subscription error: ', error);
-              }
-              handleData(data?.value);
-            });
-          }
-        }
-      });
+    const vibrationThreshold = 2.0;
+
+    if (magnitude > vibrationThreshold) {
+      setDataResult(
+        `Received data x: ${x}, y: ${y}, z: ${z}, magnitude: ${magnitude}`,
+      );
+    } else {
+      ToastAndroid.show('ERROR GETTING VIBRATION DATA', ToastAndroid.SHORT);
     }
   };
+
+  const handleData = data => {
+    const dataArray = new Uint8Array(data);
+    const allVal = dataArray.reduce((acc, item) => acc + (item % 256), 0);
+    if (allVal % 256 !== 0) {
+      ToastAndroid.show('Data transmission error');
+    }
+
+    switch (dataArray[1]) {
+      case 0x04:
+        const waveDataPacket = dataArray.slice(3);
+        const wave = transWaveData(waveDataPacket);
+        waveDataT[wave.index] = wave;
+        percentage = (Object.keys(waveDataT).length * 100) / wave.count;
+        break;
+      case 0x06:
+        const indexData = dataArray.slice(3, dataArray[2]);
+        break;
+      case 0x05:
+        waveDataT.forEach(value => {
+          resciveData[value.index / 8] =
+            resciveData[value.index / 8] | (1 << value.index % 8);
+        });
+        sendData(0x05, resciveData);
+        if (percentage < 100) {
+          return;
+        }
+        break;
+      default:
+        break;
+    }
+    setDataResult(JSON.stringify(dataArray));
+  };
+
+  // const discoverServices = async device => {
+  //   const services = await device.discoverAllServicesAndCharacteristics();
+  //   // setAllServices(services);
+  //   const desiredServices = services.find(
+  //     service => service.uuid === serviceId,
+  //   );
+  //   setDesService(desiredServices);
+
+  //   if (desiredServices) {
+  //     const charateristics = await desiredServices.charateristics();
+  //     charateristics.forEach(characteristic => {
+  //       if (characteristic.uuid === cmdCharacId) {
+  //         setWriteCharacteristic(characteristic);
+  //       }
+  //       if (characteristic.uuid === dataCharacId) {
+  //         setReadCharacteristic(characteristic);
+  //         if (!isSubscribed) {
+  //           setIsSubscribed(true);
+  //           characteristic.monitor((error, data) => {
+  //             if (error) {
+  //               console.log('Data subscription error: ', error);
+  //             }
+  //             handleData(data?.value);
+  //           });
+  //         }
+  //       }
+  //     });
+  //   }
+  // };
 
   const connect = async deviceId => {
     try {
@@ -141,6 +188,31 @@ const HomeScreen = () => {
                 }
                 if (characteristic.uuid === dataCharacId) {
                   setReadCharacteristic(characteristic);
+
+                  if (!isSubscribed) {
+                    setIsSubscribed(true);
+                    characteristic.monitor((error, charData) => {
+                      if (error) {
+                        ToastAndroid.show('ERROR Monitor', ToastAndroid.SHORT);
+                      } else {
+                        handleVibrationData(charData?.value);
+                      }
+                    });
+                  }
+                  // device.monitorCharacteristicForService(
+                  //   serviceId,
+                  //   dataCharacId,
+                  //   (error, characteristicx) => {
+                  //     if (error) {
+                  //       ToastAndroid.show(
+                  //         'ERROR GET CHARACTERISTIC',
+                  //         ToastAndroid.SHORT,
+                  //       );
+                  //     } else {
+                  //       setCollectedVibrationData(characteristicx?.value);
+                  //     }
+                  //   },
+                  // );
                   // if (!isSubscribed) {
                   //   setIsSubscribed(true);
                   //   characteristic.monitor((error, data) => {
@@ -192,7 +264,7 @@ const HomeScreen = () => {
 
       // Check if it is a device, you are looking for based on advertisement data
       // or other criteria.
-      if (device?.name) {
+      if (device?.name == 'DT_ZB_20703754') {
         bleManager.stopDeviceScan();
         setIsScanning(false);
         // Stop scanning as it's not necessary if you are scanning for one device.
@@ -212,58 +284,101 @@ const HomeScreen = () => {
     setIsScanning(false);
   };
 
-  const sendData = async data => {
-    if (writeCharateristic) {
-      const checksum = data.reduce((sum, val) => (sum + val) % 256, 0);
-      const dataWithChecksum = [...data, (256 - checksum) % 256];
-      setVibrationData(prevList => [...prevList, dataWithChecksum]);
-      // await writeCharateristic.writeWithResponse(Buffer.from(dataWithChecksum));
-    } else {
-      ToastAndroid.show('No Write Characteritic Available', ToastAndroid.SHORT);
+  const sendData = (cmd, data) => {
+    try {
+      if (writeCharateristic) {
+        let nowSendData = [0xaa, cmd, data.length + 4, ...data];
+        let cs = nowSendData.reduce((acc, byte) => (acc + byte) % 256, 0);
+        cs = 256 - cs;
+        ToastAndroid.show(
+          `Sending data ${String(nowSendData)}`,
+          ToastAndroid.LONG,
+        );
+        writeCharateristic
+          .writeWithResponse(new Buffer(nowSendData))
+          .catch(error => {
+            ToastAndroid.show(
+              `Error sending data ${JSON.stringify(error)}`,
+              ToastAndroid.SHORT,
+            );
+          });
+
+        // const checksum = data.reduce((sum, val) => (sum + val) % 256, 0);
+        // const dataWithChecksum = [...data, (256 - checksum) % 256];
+        // // setVibrationData(prevList => [...prevList, dataWithChecksum]);
+        // await writeCharateristic.writeWithResponse(
+        //   Buffer.from(dataWithChecksum),
+        // );
+      } else {
+        ToastAndroid.show(
+          'No Write Characteritic Available',
+          ToastAndroid.SHORT,
+        );
+      }
+    } catch (error) {
+      ToastAndroid.show('ERROR SENDING DATA TO DEVICE', ToastAndroid.SHORT);
     }
   };
 
   const collectData = async (val, samp, nowLength, nowFreq) => {
-    let data = [];
-    const now = new Date();
-    const formattedTime = now
-      .toISOString()
-      .replace(/[-T:Z]/g, '')
-      .slice(0, 14);
+    try {
+      const now = moment();
+      const formattedTime = now.format('YYYYMMDDHHmmss');
 
-    const startCollect = {
-      systemTime: {
-        Y: formattedTime.slice(0, 2),
-        y: formattedTime.slice(2, 4),
-        M: formattedTime.slice(5, 6),
-        d: formattedTime.slice(6, 8),
-        H: formattedTime.slice(8, 10),
-        m: formattedTime.slice(10, 12),
-        s: formattedTime.slice(12),
-      },
-      isIntvSample: 0,
-      mdefLen: {x: nowLength, z: nowLength, y: nowLength},
-      mdefFreq: {x: nowFreq, z: nowFreq, y: nowFreq},
-      meaIntv: 1,
-      lwLength: 128,
-      lwFreq: 1000,
-      lwIntv: 1,
-      isSampleInd: val,
-      indLength: 1,
-      indFreq: 500,
-      indIntv: 1,
-      sampleDir: samp,
-    };
+      const startCollect = {
+        systemTime: {
+          Y: formattedTime.slice(0, 2),
+          y: formattedTime.slice(2, 4),
+          M: formattedTime.slice(5, 6),
+          d: formattedTime.slice(6, 8),
+          H: formattedTime.slice(8, 10),
+          m: formattedTime.slice(10, 12),
+          s: formattedTime.slice(12),
+        },
+        isIntvSample: 0,
+        mdefLen: {x: nowLength, z: nowLength, y: nowLength},
+        mdefFreq: {x: nowFreq, z: nowFreq, y: nowFreq},
+        meaIntv: 1,
+        lwLength: 128,
+        lwFreq: 1000,
+        lwIntv: 1,
+        isSampleInd: val,
+        indLength: 1,
+        indFreq: 500,
+        indIntv: 1,
+        sampleDir: samp,
+      };
 
-    data = data.concat(Object.values(startCollect.systemTime).map(Number));
+      let data = [
+        ...Object.values(startCollect.systemTime).map(time => parseInt(time)),
+        startCollect.isIntvSample,
+        ...Object.values(startCollect.mdefLen).map(len => int32Array(len)),
+        ...Object.values(startCollect.mdefFreq).map(freq => int32Array(freq)),
+        int32Array(startCollect.meaIntv),
+        int32Array(startCollect.lwLength),
+        int32Array(startCollect.lwFreq),
+        int32Array(startCollect.lwIntv),
+        startCollect.isSampleInd,
+        int32Array(startCollect.indLength),
+        int32Array(startCollect.indFreq),
+        int32Array(startCollect.indIntv),
+        startCollect.sampleDir,
+      ];
 
-    data = data.concat([
-      startCollect.mdefLen.x,
-      startCollect.mdefLen.z,
-      startCollect.mdefLen.y,
-    ]);
+      sendData(0x01, data);
+    } catch (error) {
+      ToastAndroid.show('ERROR COLLECTING DATA', ToastAndroid.SHORT);
+    }
+  };
 
-    sendData(data);
+  const int32Array = intValue => {
+    let result = new Array(4).fill(0);
+    result[0] = intValue & 0xff;
+    result[1] = (intValue >> 8) & 0xff;
+    result[2] = (intValue >> 16) & 0xff;
+    result[3] = (intValue >> 24) & 0xff;
+
+    return result;
   };
 
   React.useEffect(() => {
@@ -282,8 +397,23 @@ const HomeScreen = () => {
     initialize();
   }, []);
 
+  // React.useEffect(() => {
+  //   if (connectedDevice && desService && readCharacteristic) {
+  //     connectedDevice.monitorCharacteristicForService(
+  //       serviceId,
+  //       readCharacteristic.uuid,
+  //       (error, characteristic) => {
+  //         if (error) {
+  //           ToastAndroid.SHORT('ERROR USEEFFECT VIBRATION', JSON.stringify(error));
+  //         } else {
+  //           setCollectedVibrationData(characteristic?.value);
+  //         }
+  //       },
+  //     );
+  //   }
+  // }, [connectedDevice, desService, readCharacteristic]);
+
   const collectVibData = async () => {
-    setDataResult([]);
     percentage = 0;
     waveDataT = {};
     resciveData = new Array(242).fill(0);
@@ -303,7 +433,7 @@ const HomeScreen = () => {
     setIsFetching(true);
     try {
       // Subscribe to vibration data characteristic
-      const subscription = connectedDevice?.monitorCharacteristicForService(
+      connectedDevice?.monitorCharacteristicForService(
         serviceId,
         readCharacteristic?.uuid,
         (error, characteristic) => {
@@ -315,17 +445,19 @@ const HomeScreen = () => {
             console.error('Error subscribing to characteristic:', error);
             return;
           }
-          setCollectedVibrationData(prevList => [...prevList, characteristic]);
-
           if (characteristic?.value) {
-            ToastAndroid.show(
-              'Succeed getting vibration data',
-              ToastAndroid.SHORT,
-            );
             // Decode the vibration data
-            // const vibrationData = Buffer.from(characteristic.value, 'base64');
-            // console.log('Vibration Data:', vibrationData);
+            const vibrationData = Buffer.from(characteristic?.value, 'base64');
+            console.log('Vibration Data:', vibrationData);
+            setCollectedVibrationData(vibrationData);
           }
+
+          // if (characteristic?.value) {
+
+          // Decode the vibration data
+          // const vibrationData = Buffer.from(characteristic.value, 'base64');
+          // console.log('Vibration Data:', vibrationData);
+          // }
         },
       );
 
@@ -339,6 +471,20 @@ const HomeScreen = () => {
     } finally {
       setIsFetching(false);
     }
+  };
+
+  const onReadCharacteristic = async () => {
+    const readData = await bleManager
+      .readCharacteristicForDevice(
+        connectedDevice?.id,
+        desService?.uuid,
+        readCharacteristic?.uuid,
+      )
+      .then(data => {
+        setReadCharData(data);
+        ToastAndroid.show(JSON.stringify(data), ToastAndroid.LONG);
+      })
+      .catch(error => ToastAndroid.show('ERROR OCCURED', ToastAndroid.SHORT));
   };
 
   return (
@@ -363,15 +509,20 @@ const HomeScreen = () => {
         <View style={{height: 20}} />
         {deviceList?.map(deviceItem => (
           <TouchableOpacity onPress={() => connect(deviceItem?.id)}>
-            <Text>{JSON.stringify(deviceItem?.name)}</Text>
+            <Text>{deviceItem?.name}</Text>
           </TouchableOpacity>
         ))}
-        <Button title={'Collect Vibration Data'} onPress={getVibrationData} />
+
+        <TouchableOpacity onPress={() => connect('6C:FD:22:A9:71:60')}>
+          <Text>DT_ZB_20703754</Text>
+        </TouchableOpacity>
+        <Text>{`Data Result:  ${dataResult}`}</Text>
+
+        <Button title={'Collect Vib Data'} onPress={collectVibData} />
         <View style={{height: 20}} />
 
-        <Text>{`Vibration data result: ${JSON.stringify(
-          collectedVibrationData,
-        )}`}</Text>
+        {/* <Text>{`Vibration data result: ${dataResult}`}</Text>
+        <Text>{`Read Data Res: ${JSON.stringify(readCharData)}`}</Text> */}
         {/* <TouchableOpacity onPress={onReadFile}>
         <Text>Read file</Text>
       </TouchableOpacity> */}
